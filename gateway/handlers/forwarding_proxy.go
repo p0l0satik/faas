@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -46,10 +45,10 @@ func MakeForwardingProxyHandler(proxy *types.HTTPClientReverseProxy,
 	urlPathTransformer URLPathTransformer,
 	serviceAuthInjector middleware.AuthInjector) http.HandlerFunc {
 
-	writeRequestURI := false
-	if _, exists := os.LookupEnv("write_request_uri"); exists {
-		writeRequestURI = exists
-	}
+	writeRequestURI := true
+	// if _, exists := os.LookupEnv("write_request_uri"); exists {
+	// 	writeRequestURI = exists
+	// }
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		baseURL := baseURLResolver.Resolve(r)
@@ -61,7 +60,6 @@ func MakeForwardingProxyHandler(proxy *types.HTTPClientReverseProxy,
 		}
 
 		start := time.Now()
-
 		statusCode, err := forwardRequest(w, r, proxy.Client, baseURL, requestURL, proxy.Timeout, writeRequestURI, serviceAuthInjector)
 
 		seconds := time.Since(start)
@@ -128,6 +126,21 @@ func forwardRequest(w http.ResponseWriter,
 	defer cancel()
 
 	res, resErr := proxyClient.Do(upstreamReq.WithContext(ctx))
+	if r.Header.Get("Workflow") == "YES" {
+
+		graph := strings.Split(r.Header.Get("Graph"), ",")
+		log.Print(graph)
+		for _, function := range graph {
+			upstreamReq2 := buildUpstreamRequest(r, baseURL, "/function/"+function)
+			if serviceAuthInjector != nil {
+				serviceAuthInjector.Inject(upstreamReq2)
+			}
+			upstreamReq2.Body = res.Body
+			res, resErr = proxyClient.Do(upstreamReq2.WithContext(ctx))
+			// log.Printf(string(function))
+		}
+
+	}
 	if resErr != nil {
 		badStatus := http.StatusBadGateway
 		w.WriteHeader(badStatus)
@@ -147,6 +160,11 @@ func forwardRequest(w http.ResponseWriter,
 		// Copy the body over
 		io.CopyBuffer(w, res.Body, nil)
 	}
+	// log.Printf("Response body")
+	// reader := res.Body
+	// buf := new(bytes.Buffer)
+	// buf.ReadFrom(reader)
+	// log.Printf(buf.String())
 
 	return res.StatusCode, nil
 }
