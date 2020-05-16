@@ -93,16 +93,16 @@ func main() {
 	nilURLTransformer := handlers.TransparentURLPathTransformer{}
 	trimURLTransformer := handlers.FunctionPrefixTrimmingURLPathTransformer{}
 
-	// if config.DirectFunctions {
-	// 	functionURLResolver = handlers.FunctionAsHostBaseURLResolver{
-	// 		FunctionSuffix:    config.DirectFunctionsSuffix,
-	// 		FunctionNamespace: config.Namespace,
-	// 	}
-	// 	functionURLTransformer = trimURLTransformer
-	// } else {
-	functionURLResolver = urlResolver
-	functionURLTransformer = nilURLTransformer
-	// }
+	if config.DirectFunctions {
+		functionURLResolver = handlers.FunctionAsHostBaseURLResolver{
+			FunctionSuffix:    config.DirectFunctionsSuffix,
+			FunctionNamespace: config.Namespace,
+		}
+		functionURLTransformer = trimURLTransformer
+	} else {
+		functionURLResolver = urlResolver
+		functionURLTransformer = nilURLTransformer
+	}
 
 	var serviceAuthInjector middleware.AuthInjector
 

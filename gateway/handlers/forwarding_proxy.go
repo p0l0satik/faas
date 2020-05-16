@@ -110,6 +110,7 @@ func forwardRequest(w http.ResponseWriter,
 	serviceAuthInjector middleware.AuthInjector) (int, error) {
 
 	upstreamReq := buildUpstreamRequest(r, baseURL, requestURL)
+	log.Printf("forwardRequest: %s %s\n", baseURL, requestURL)
 	if upstreamReq.Body != nil {
 		defer upstreamReq.Body.Close()
 	}
@@ -131,7 +132,8 @@ func forwardRequest(w http.ResponseWriter,
 		graph := strings.Split(r.Header.Get("Graph"), ",")
 		log.Print(graph)
 		for _, function := range graph {
-			upstreamReq2 := buildUpstreamRequest(r, baseURL, "/function/"+function)
+			upstreamReq2 := buildUpstreamRequest(r, "", "http://"+function+".openfaas-fn.svc.cluster.local:8080")
+			log.Printf("forwardReques2t: %s %s\n", upstreamReq2.Host, upstreamReq2.URL.String())
 			if serviceAuthInjector != nil {
 				serviceAuthInjector.Inject(upstreamReq2)
 			}
