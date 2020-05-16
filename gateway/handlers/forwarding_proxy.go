@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"regexp"
@@ -105,7 +106,8 @@ func start_function(r *http.Request,
 	function string,
 	timeout time.Duration,
 	serviceAuthInjector middleware.AuthInjector,
-	inp *http.Response) (*http.Response, error) {
+	inp *http.Response,
+	c chan string) {
 	upstreamReq := buildUpstreamRequest(r, "", "http://"+function+".openfaas-fn.svc.cluster.local:8080")
 	log.Printf("forwardReques2t: %s %s\n", upstreamReq.Host, upstreamReq.URL.String())
 	if serviceAuthInjector != nil {
@@ -114,8 +116,15 @@ func start_function(r *http.Request,
 	upstreamReq.Body = inp.Body
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
-	res, resErr := proxyClient.Do(upstreamReq.WithContext(ctx))
-	return res, resErr
+	res, _ := proxyClient.Do(upstreamReq.WithContext(ctx))
+	log.Printf("before reading")
+	responseData, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	returnstr := string(responseData)
+	log.Printf(returnstr)
+	c <- returnstr
 }
 
 func forwardRequest(w http.ResponseWriter,
@@ -146,15 +155,48 @@ func forwardRequest(w http.ResponseWriter,
 
 	res, resErr := proxyClient.Do(upstreamReq.WithContext(ctx))
 	if r.Header.Get("Workflow") == "YES" {
-
+		result_str := ""
+		c := make(chan string, 5)
 		graph := strings.Split(r.Header.Get("Graph"), ",")
 		log.Print(graph)
+		parallel_num := 0
+
 		for _, function := range graph {
-			res, resErr = start_function(r, proxyClient, function, timeout, serviceAuthInjector, res)
-			// log.Printf(string(function))
+			go start_function(r, proxyClient, function, timeout, serviceAuthInjector, res, c)
+			parallel_num++
 		}
 
+		for ; parallel_num > 0; parallel_num-- {
+			result_str += <-c
+		}
+		log.Printf(result_str)
+
+		res_reader := strings.NewReader(result_str)
+		// io.Copy(res.Body, res_reader)
+
+		if resErr != nil {
+			badStatus := http.StatusBadGateway
+			w.WriteHeader(badStatus)
+			return badStatus, resErr
+		}
+
+		if res.Body != nil {
+			defer res.Body.Close()
+		}
+
+		copyHeaders(w.Header(), &res.Header)
+
+		// Write status code
+		w.WriteHeader(res.StatusCode)
+
+		if res.Body != nil {
+			// Copy the body over
+			io.CopyBuffer(w, res_reader, nil)
+		}
+
+		return res.StatusCode, nil
 	}
+
 	if resErr != nil {
 		badStatus := http.StatusBadGateway
 		w.WriteHeader(badStatus)
@@ -174,11 +216,6 @@ func forwardRequest(w http.ResponseWriter,
 		// Copy the body over
 		io.CopyBuffer(w, res.Body, nil)
 	}
-	// log.Printf("Response body")
-	// reader := res.Body
-	// buf := new(bytes.Buffer)
-	// buf.ReadFrom(reader)
-	// log.Printf(buf.String())
 
 	return res.StatusCode, nil
 }
