@@ -100,6 +100,21 @@ func buildUpstreamRequest(r *http.Request, baseURL string, requestURL string) *h
 	return upstreamReq
 }
 
+func start_function(r *http.Request, 
+					proxyClient *http.Client,
+					function string,
+					serviceAuthInjector middleware.AuthInjector,
+					inp *http.Response) (*http.Response, error) {
+	upstreamReq := buildUpstreamRequest(r, "", "http://" + function + ".openfaas-fn.svc.cluster.local:8080")
+	log.Printf("forwardReques2t: %s %s\n", upstreamReq.Host, upstreamReq.URL.String())
+	if serviceAuthInjector != nil {
+		serviceAuthInjector.Inject(upstreamReq)
+	}
+	upstreamReq.Body = inp.Body
+	res, resErr := proxyClient.Do(upstreamReq2.WithContext(ctx))
+	return res, resErr
+}
+
 func forwardRequest(w http.ResponseWriter,
 	r *http.Request,
 	proxyClient *http.Client,
@@ -132,13 +147,7 @@ func forwardRequest(w http.ResponseWriter,
 		graph := strings.Split(r.Header.Get("Graph"), ",")
 		log.Print(graph)
 		for _, function := range graph {
-			upstreamReq2 := buildUpstreamRequest(r, "", "http://"+function+".openfaas-fn.svc.cluster.local:8080")
-			log.Printf("forwardReques2t: %s %s\n", upstreamReq2.Host, upstreamReq2.URL.String())
-			if serviceAuthInjector != nil {
-				serviceAuthInjector.Inject(upstreamReq2)
-			}
-			upstreamReq2.Body = res.Body
-			res, resErr = proxyClient.Do(upstreamReq2.WithContext(ctx))
+			res, resErr = start_function(r, proxyClient, function, serviceAuthInjector, res)
 			// log.Printf(string(function))
 		}
 
