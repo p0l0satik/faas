@@ -18,6 +18,7 @@ import (
 // MakeInfoHandler is responsible for display component version information
 func MakeInfoHandler(h http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("G14")
 		responseRecorder := httptest.NewRecorder()
 		h.ServeHTTP(responseRecorder, r)
 		upstreamCall := responseRecorder.Result()

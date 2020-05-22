@@ -4,6 +4,8 @@
 package handlers
 
 import (
+	"os"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -13,9 +15,10 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
+	
 	"github.com/openfaas/faas/gateway/pkg/middleware"
 	"github.com/openfaas/faas/gateway/types"
+	"strconv"
 )
 
 // functionMatcher parses out the service name (group 1) and rest of path (group 2).
@@ -47,9 +50,9 @@ func MakeForwardingProxyHandler(proxy *types.HTTPClientReverseProxy,
 	serviceAuthInjector middleware.AuthInjector) http.HandlerFunc {
 
 	writeRequestURI := true
-	// if _, exists := os.LookupEnv("write_request_uri"); exists {
-	// 	writeRequestURI = exists
-	// }
+	if _, exists := os.LookupEnv("write_request_uri"); exists {
+		writeRequestURI = exists
+	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		baseURL := baseURLResolver.Resolve(r)
@@ -85,19 +88,16 @@ func buildUpstreamRequest(r *http.Request, baseURL string, requestURL string) *h
 
 	copyHeaders(upstreamReq.Header, &r.Header)
 	deleteHeaders(&upstreamReq.Header, &hopHeaders)
-
 	if len(r.Host) > 0 && upstreamReq.Header.Get("X-Forwarded-Host") == "" {
 		upstreamReq.Header["X-Forwarded-Host"] = []string{r.Host}
 	}
-
+	
 	if upstreamReq.Header.Get("X-Forwarded-For") == "" {
 		upstreamReq.Header["X-Forwarded-For"] = []string{r.RemoteAddr}
 	}
-
 	if r.Body != nil {
 		upstreamReq.Body = r.Body
-	}
-
+	} 
 	return upstreamReq
 }
 
@@ -106,24 +106,34 @@ func start_function(r *http.Request,
 	function string,
 	timeout time.Duration,
 	serviceAuthInjector middleware.AuthInjector,
-	inp *http.Response,
+	bytesIn []byte,
 	c chan string) {
-	upstreamReq := buildUpstreamRequest(r, "", "http://"+function+".openfaas-fn.svc.cluster.local:8080")
-	log.Printf("forwardReques2t: %s %s\n", upstreamReq.Host, upstreamReq.URL.String())
+
+	url := "http://"+function+".openfaas-fn.svc.cluster.local:8080"
+	reader := bytes.NewReader(bytesIn)
+	upstreamReq, _ := http.NewRequest(r.Method, url, reader)
+
+	if upstreamReq.Body != nil {
+		defer upstreamReq.Body.Close()
+	}
+	
 	if serviceAuthInjector != nil {
 		serviceAuthInjector.Inject(upstreamReq)
 	}
-	upstreamReq.Body = inp.Body
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	ctx, cancel := context.WithTimeout(upstreamReq.Context(), timeout)
 	defer cancel()
-	res, _ := proxyClient.Do(upstreamReq.WithContext(ctx))
-	log.Printf("before reading")
-	responseData, err := ioutil.ReadAll(res.Body)
+	res, err := proxyClient.Do(upstreamReq.WithContext(ctx))
 	if err != nil {
 		log.Fatal(err)
+	} 
+	if res.Body != nil {
+		defer res.Body.Close()
+	}
+	responseData, err_read := ioutil.ReadAll(res.Body)
+	if err_read != nil {
+		log.Fatal(err_read)
 	}
 	returnstr := string(responseData)
-	log.Printf(returnstr)
 	c <- returnstr
 }
 
@@ -137,7 +147,6 @@ func forwardRequest(w http.ResponseWriter,
 	serviceAuthInjector middleware.AuthInjector) (int, error) {
 
 	upstreamReq := buildUpstreamRequest(r, baseURL, requestURL)
-	log.Printf("forwardRequest: %s %s\n", baseURL, requestURL)
 	if upstreamReq.Body != nil {
 		defer upstreamReq.Body.Close()
 	}
@@ -155,25 +164,32 @@ func forwardRequest(w http.ResponseWriter,
 
 	res, resErr := proxyClient.Do(upstreamReq.WithContext(ctx))
 	if r.Header.Get("Workflow") == "YES" {
-		result_str := ""
-		c := make(chan string, 5)
-		graph := strings.Split(r.Header.Get("Graph"), ",")
-		log.Print(graph)
-		parallel_num := 0
-
-		for _, function := range graph {
-			go start_function(r, proxyClient, function, timeout, serviceAuthInjector, res, c)
-			parallel_num++
+		responseData, _ := ioutil.ReadAll(res.Body)
+		
+		buffer := ""
+		graph := strings.Split(r.Header.Get("Graph"), "-")
+		for _, node := range graph {
+			buffer = ""
+			requestSequance := strings.Split(node, ",")
+			c := make(chan string, len(requestSequance))
+			parallel_num := 0
+			for _, function := range requestSequance {
+				parallel_num++
+				start_function(r, proxyClient, function, timeout, serviceAuthInjector, responseData, c)
+			}
+			for ; parallel_num > 0; parallel_num-- {
+				buffer += <-c
+			}
+			responseData = []byte(buffer)
+			
 		}
-
-		for ; parallel_num > 0; parallel_num-- {
-			result_str += <-c
-		}
-		log.Printf(result_str)
-
+		
+		
+		result_str := buffer
 		res_reader := strings.NewReader(result_str)
-		// io.Copy(res.Body, res_reader)
-
+		res.Body = ioutil.NopCloser(res_reader)
+		res.ContentLength = int64(len(result_str))
+		res.Header.Set("Content-Length", strconv.Itoa(len(result_str)))
 		if resErr != nil {
 			badStatus := http.StatusBadGateway
 			w.WriteHeader(badStatus)
@@ -191,7 +207,7 @@ func forwardRequest(w http.ResponseWriter,
 
 		if res.Body != nil {
 			// Copy the body over
-			io.CopyBuffer(w, res_reader, nil)
+			io.CopyBuffer(w, res.Body, nil)
 		}
 
 		return res.StatusCode, nil
