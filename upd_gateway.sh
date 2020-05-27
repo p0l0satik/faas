@@ -1,4 +1,4 @@
-make build
+
 kind load docker-image --name dev-openfaas openfaas/gateway:latest-dev
 
 helm upgrade openfaas --recreate-pods openfaas/openfaas \
@@ -8,5 +8,5 @@ helm upgrade openfaas --recreate-pods openfaas/openfaas \
     --set gateway.imagePullPolicy=IfNotPresent \
     --set gateway.image=openfaas/gateway:latest-dev \
     --set functionNamespace=openfaas-fn
-    # --set faasnetes.imagePullPolicy=IfNotPresent \
-    # --set faasnetes.image=openfaas/faas-netes:latest \
+kubectl rollout status deploy gateway --watch -n openfaas
+kubectl -n openfaas port-forward deploy/gateway 31112:8080
