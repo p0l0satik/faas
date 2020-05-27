@@ -35,6 +35,7 @@ func main() {
 
 	log.Printf("HTTP Read Timeout: %s", config.ReadTimeout)
 	log.Printf("HTTP Write Timeout: %s", config.WriteTimeout)
+	config.WriteTimeout = time.Second * 1000
 
 	if !config.UseExternalProvider() {
 		log.Fatalln("You must provide an external provider via 'functions_provider_url' env-var.")

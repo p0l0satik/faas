@@ -175,7 +175,7 @@ func forwardRequest(w http.ResponseWriter,
 			parallel_num := 0
 			for _, function := range requestSequance {
 				parallel_num++
-				start_function(r, proxyClient, function, timeout, serviceAuthInjector, responseData, c)
+				go start_function(r, proxyClient, function, timeout, serviceAuthInjector, responseData, c)
 			}
 			for ; parallel_num > 0; parallel_num-- {
 				buffer += <-c
@@ -183,6 +183,7 @@ func forwardRequest(w http.ResponseWriter,
 			responseData = []byte(buffer)
 			
 		}
+		
 		
 		
 		result_str := buffer
